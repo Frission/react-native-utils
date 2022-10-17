@@ -8,7 +8,7 @@ import MApiResponse from "./model/util/MApiResponse";
 export type ApiResponse<T> = T extends {} ? AxiosResponse<MApiResponse & T> : AxiosResponse<MApiResponse & unknown>
 export type FileUpload = { uri: string, name: string, type: string }
 
-class ConnectionManager {
+class RequestClient {
 
     public static logRequests = false
 
@@ -358,4 +358,4 @@ class ConnectionManager {
     }
 }
 
-export default ConnectionManager
+export default RequestClient

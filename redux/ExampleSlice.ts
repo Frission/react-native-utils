@@ -1,6 +1,6 @@
 import { createAsyncThunk, createSlice } from "@reduxjs/toolkit";
 import { CancelToken } from "axios";
-import ConnectionManager from "../core/ConnectionManager";
+import RequestClient from "../core/RequestClient";
 import { createResourceThunkReducers, emptyResource, Resource, resourceIsLoaded, resourceIsLoadedWithoutError } from "../util/reduxUtil";
 
 const CANCEL_TOKEN_TAG = "CancelTokenTag"
@@ -12,7 +12,7 @@ export interface SliceState {
 
 const initialState: SliceState = {
     data: emptyResource(),
-    cancelToken: ConnectionManager.createCancelToken(CANCEL_TOKEN_TAG)
+    cancelToken: RequestClient.createCancelToken(CANCEL_TOKEN_TAG)
 }
 
 
@@ -20,7 +20,7 @@ const fetchData = createAsyncThunk(
     "slice/fetchData",
     async ({ param }: { param: string | null }, { rejectWithValue }) => {
         try {
-            return await getExampleData(param, ConnectionManager.getCancelToken(CANCEL_TOKEN_TAG))
+            return await getExampleData(param, RequestClient.getCancelToken(CANCEL_TOKEN_TAG))
         } catch (err) {
             return rejectWithValue(err)
         }
