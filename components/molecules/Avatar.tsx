@@ -9,7 +9,7 @@ import ThemeImage from "../../atoms/ThemeImage";
 
 const Avatar = ({ userID, size = 32, useDefaultStyling = true, style }: AvatarProps) => {
 
-    const { url, sid, avatarSignature } = useSelector(userSelectors.selectAvatarProps)
+    const { url, token, avatarSignature } = useSelector(userSelectors.selectAvatarProps)
 
     const [showPlaceholder, setShowPlaceholder] = React.useState(false)
 
@@ -30,7 +30,7 @@ const Avatar = ({ userID, size = 32, useDefaultStyling = true, style }: AvatarPr
                 source={{
                     uri: `${url}?userid=${userID}&avatarSignature=${avatarSignature}`,
                     headers: {
-                        Cookie: `sid=${sid};`
+                        Authorization: `Bearer ${token}`
                     },
                     cache: "web",
                 }}
@@ -52,7 +52,7 @@ const Avatar = ({ userID, size = 32, useDefaultStyling = true, style }: AvatarPr
                 ]}
             >
                 <ThemeImage
-                    source={require("../../../../assets/images/avatar_default.png")}
+                    source={require("avatar_default.png")}
                     resizeMode="contain"
                     style={[
                         { padding: size * 0.25 },
