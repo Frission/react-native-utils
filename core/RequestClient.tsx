@@ -4,7 +4,7 @@ import devlog from "../../util/devlog";
 import { getIsDev, getRefreshToken, getUserToken, setIsDev, setRefreshToken, setUserToken } from "../asyncStorageHelpers";
 import { PLATFORM_OS_FORMATTED, DEVELOPMENT_BASE_URL, PRODUCTION_BASE_URL, PLATFORM_VERSION, PRODUCTION_HOST, DEVELOPMENT_HOST } from "../constants";
 import { API_CLIENT_KEY } from "../keys";
-import { Banking403, HTTP403 } from "./HttpErrors";
+import { HTTP403 } from "./HttpErrors";
 import type LoginResponse from "../data/model/response/auth/LoginResponse";
 import { delay } from "../../util/miscUtils";
 import { AppEnvironment } from "../../util/environmentUtils";
@@ -14,8 +14,7 @@ export type Response<T> = AxiosResponse<ApiResponse<T>>
 export type RequestConfig = AxiosRequestConfig & {
     authorized?: boolean,
     isRetryAfterRefresh?: boolean,
-    retryCount?: number,
-    bankingAuthorized?: boolean
+    retryCount?: number
 }
 export type FileUpload = { uri: string, name: string, type: string }
 
@@ -270,11 +269,6 @@ class RequestClient {
         }
 
         this.axiosInstance.defaults.headers.common["Accept-Language"] = "tr-TR"
-        this.axiosInstance.defaults.headers.common["X-Moneye-API-Client-Key"] = API_CLIENT_KEY
-        this.axiosInstance.defaults.headers.common["X-Moneye-APP-Version"] = "1.0.30"
-        this.axiosInstance.defaults.headers.common["X-Moneye-APP-Platform"] = PLATFORM_OS_FORMATTED
-        this.axiosInstance.defaults.headers.common["X-Moneye-APP-OS"] = PLATFORM_VERSION
-
 
         // Request Interceptor
 
@@ -391,14 +385,10 @@ class RequestClient {
                 // if this is a repeated request after a new token was retrieved, try again
                 if ((error.config as RequestConfig).isRetryAfterRefresh !== true &&
                     (error.config as RequestConfig).authorized !== false &&
-                    (error.config as RequestConfig).bankingAuthorized !== true &&
                     status == 403 &&
                     error.config?.url != refreshTokenRoute) {
                     return await RequestClient.retryAfterRefresh(error.config)
                 }
-
-                if ((error.config as RequestConfig).bankingAuthorized === true && status == 403)
-                    return Promise.reject(Banking403)
 
                 // retry requests with retry count and a 500+ or 0 error, status 0 means network error
                 if ((status >= 500 || status == 0) && ((error.config as RequestConfig)?.retryCount ?? 0) > 0) {
