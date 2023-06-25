@@ -1,255 +1,320 @@
-import AsyncStorage from "@react-native-async-storage/async-storage";
-import axios, { AxiosInstance, AxiosRequestConfig, AxiosResponse, CancelToken, CancelTokenSource } from "axios";
-import { Platform } from "react-native";
-import devlog from "../util/devlog";
-import { AuthError401, AuthError404, AuthError412, DEV_BASE_URL, PROD_BASE_URL } from "./Constants";
-import MApiResponse from "./model/util/MApiResponse";
+import axios, { AxiosError, AxiosHeaderValue, AxiosInstance, AxiosRequestConfig, AxiosResponse, CancelToken, CancelTokenSource, RawAxiosRequestHeaders } from "axios";
+import type { ApiResponse } from "../data/model/response/util/ApiResponse";
+import devlog from "../../util/devlog";
+import { getIsDev, getRefreshToken, getUserToken, setIsDev, setRefreshToken, setUserToken } from "../asyncStorageHelpers";
+import { PLATFORM_OS_FORMATTED, DEVELOPMENT_BASE_URL, PRODUCTION_BASE_URL, PLATFORM_VERSION, PRODUCTION_HOST, DEVELOPMENT_HOST } from "../constants";
+import { API_CLIENT_KEY } from "../keys";
+import { Banking403, HTTP403 } from "./HttpErrors";
+import type LoginResponse from "../data/model/response/auth/LoginResponse";
+import { delay } from "../../util/miscUtils";
+import { AppEnvironment } from "../../util/environmentUtils";
+import { ErrorMonitoring } from "../../util/monitoring/ErrorMonitoring";
 
-export type ApiResponse<T> = T extends {} ? AxiosResponse<MApiResponse & T> : AxiosResponse<MApiResponse & unknown>
+export type Response<T> = AxiosResponse<ApiResponse<T>>
+export type RequestConfig = AxiosRequestConfig & {
+    authorized?: boolean,
+    isRetryAfterRefresh?: boolean,
+    retryCount?: number,
+    bankingAuthorized?: boolean
+}
 export type FileUpload = { uri: string, name: string, type: string }
+
+const refreshTokenRoute = "auth/sign-in/refresh"
 
 class RequestClient {
 
+    public static logResponses = false
     public static logRequests = false
 
-    private static instance: AxiosInstance | null = null
+    private static axiosInstance: AxiosInstance | null = null
     private static cancelTokenSources: Map<string, CancelTokenSource> = new Map<string, CancelTokenSource>()
 
-    private static sessionID: string | null = null
+    private static authorizationToken: string | null = null
+    private static refreshTokenPromise: Promise<AxiosResponse<any, any>> | null = null
+
+    private static initializationPromiseResolver: ((value?: unknown) => void) | null = null
 
     private constructor() { }
 
-    public static getInstance() {
-        if (this.instance === null)
-            this.createInstance(false)
-
-        return this.instance
-    }
-
-    public static async get<T>(url: string, config?: AxiosRequestConfig | undefined): Promise<ApiResponse<T> | undefined> {
-        if (this.instance === null)
+    public static async getInstance() {
+        if (this.axiosInstance === null)
             await this.refreshInstace()
 
-        devlog("get request: " + url)
-
-        return await this.instance?.get(url, config)
+        return Promise.resolve(this.axiosInstance as AxiosInstance)
     }
 
-    public static async getParams<T>(url: string, params?: any, config?: AxiosRequestConfig | undefined): Promise<ApiResponse<T> | undefined> {
-        if (this.instance === null)
-            await this.refreshInstace()
-
-        devlog("get request: " + url)
-
-        return await this.instance?.get(url, { ...config, params })
+    public static async ensureInitialized() {
+        if (this.axiosInstance != null)
+            return Promise.resolve()
+        else
+            return new Promise((resolve) => {
+                this.initializationPromiseResolver = resolve
+            })
     }
 
-    public static async getBase<T>(baseUrl: string, params?: any, config?: AxiosRequestConfig | undefined): Promise<ApiResponse<T> | undefined> {
-        try {
-            if (!config)
-                config = { headers: {} }
-            else
-                config = { ...config, headers: { ...config?.headers } }
+    public static async setAuthToken(token: string | null) {
+        this.authorizationToken = token
+    }
 
-            if (this.sessionID == null)
-                this.sessionID = await AsyncStorage.getItem("sid")
+    public static async get<T>(endpoint: string, config?: RequestConfig): Promise<Response<T>> {
+        devlog("get request: " + endpoint)
 
-            if (this.sessionID && config.headers) {
-                if (Platform.OS == "ios")
-                    config.headers["Cookies"] = `sid=${this.sessionID};`
-                else
-                    config.headers["Cookie"] = `sid=${this.sessionID};`
+        return await (await this.getInstance()).get(endpoint, config)
+    }
+
+    public static async getForResponse<T>(endpoint: string, config?: RequestConfig): Promise<AxiosResponse<T>> {
+        devlog("get request: " + endpoint)
+
+        return await (await this.getInstance()).get(endpoint, config)
+    }
+
+    public static async post<T>(endpoint: string, data?: any, config?: RequestConfig): Promise<Response<T>> {
+        devlog("post request: " + endpoint)
+
+        let reqConfig: RequestConfig = { ...config, headers: { ...config?.headers } }
+
+        if (data != null && reqConfig.headers != null && !reqConfig.headers?.["Content-Type"]) {
+            reqConfig.headers["Content-Type"] = "application/json"
+        }
+
+        return await (await this.getInstance()).post(endpoint, data, reqConfig)
+    }
+
+    public static async postForResponse<T>(endpoint: string, data?: any, config?: RequestConfig): Promise<AxiosResponse<T>> {
+        devlog("post request: " + endpoint)
+
+        let reqConfig: RequestConfig = { ...config, headers: { ...config?.headers } }
+
+        if (data != null && reqConfig.headers != null && !reqConfig.headers?.["Content-Type"]) {
+            reqConfig.headers["Content-Type"] = "application/json"
+        }
+
+        return await (await this.getInstance()).post(endpoint, data, reqConfig)
+    }
+
+    public static async put<T>(endpoint: string, data: any, config?: RequestConfig): Promise<Response<T>> {
+        devlog("put request: " + endpoint)
+
+        let reqConfig: RequestConfig = { ...config, headers: { ...config?.headers } }
+
+        if (reqConfig.headers != null && !reqConfig.headers?.["Content-Type"]) {
+            reqConfig.headers["Content-Type"] = "application/json"
+        }
+
+        return await (await this.getInstance()).put(endpoint, data, reqConfig)
+    }
+
+    public static async putForResponse<T>(endpoint: string, data: any, config?: RequestConfig): Promise<AxiosResponse<T>> {
+        devlog("put request: " + endpoint)
+
+        let reqConfig: RequestConfig = { ...config, headers: { ...config?.headers } }
+
+        if (reqConfig.headers != null && !reqConfig.headers?.["Content-Type"]) {
+            reqConfig.headers["Content-Type"] = "application/json"
+        }
+
+        return await (await this.getInstance()).put(endpoint, data, reqConfig)
+    }
+
+    public static async delete<T>(endpoint: string, config?: RequestConfig): Promise<Response<T>> {
+        devlog("delete request: " + endpoint)
+
+        return await (await this.getInstance()).delete(endpoint, config)
+    }
+
+    public static async deleteForResponse<T>(endpoint: string, config?: RequestConfig): Promise<AxiosResponse<T>> {
+        devlog("delete request: " + endpoint)
+
+        return await (await this.getInstance()).delete(endpoint, config)
+    }
+
+    public static async postFile<T>(
+        endpoint: string,
+        file: FileUpload,
+        formDataName: string = "file",
+        config?: RequestConfig
+    ): Promise<Response<T>> {
+        let formData = new FormData()
+        formData.append(formDataName, file)
+
+        const multipartConfig = {
+            ...config,
+            headers: {
+                ...config?.headers,
+                "Content-Type": "multipart/form-data"
             }
+        }
 
+        return (await this.getInstance()).postForm(endpoint, formData, multipartConfig)
+    }
+
+    public static async putFile<T>(
+        endpoint: string,
+        file: FileUpload,
+        formDataName: string = "file",
+        config?: RequestConfig
+    ): Promise<Response<T>> {
+        let formData = new FormData()
+        formData.append(formDataName, file)
+
+        const multipartConfig = {
+            ...config,
+            headers: {
+                ...config?.headers,
+                "Content-Type": "multipart/form-data"
+            }
+        }
+
+        return (await this.getInstance()).putForm(endpoint, formData, multipartConfig)
+    }
+
+    public static async putForm<T>(
+        endpoint: string,
+        formData: FormData,
+        config?: RequestConfig
+    ): Promise<Response<T>> {
+        const multipartConfig = { ...config, headers: { ...config?.headers, "Content-Type": "multipart/form-data" } }
+        return (await this.getInstance()).putForm(endpoint, formData, multipartConfig)
+    }
+
+    public static async putFormForResponse<T>(
+        endpoint: string,
+        formData: FormData,
+        config?: RequestConfig
+    ): Promise<AxiosResponse<T>> {
+        const multipartConfig = { ...config, headers: { ...config?.headers, "Content-Type": "multipart/form-data" } }
+        return (await this.getInstance()).putForm(endpoint, formData, multipartConfig)
+    }
+
+
+    //#region Requests with different base URLs
+
+    public static async getFrom<R>(baseUrl: string, config?: RequestConfig): Promise<AxiosResponse<R>> {
+        try {
             devlog("get request: " + baseUrl)
 
-            return await axios.get(baseUrl, { ...config, params })
+            return await axios.get(baseUrl, { ...config })
         } catch (err) {
-            return this.handleResponseError(err)
+            return await this.handleResponseError(err as AxiosError)
         }
     }
 
-    public static async post<T>(url: string, config?: AxiosRequestConfig | undefined): Promise<ApiResponse<T> | undefined> {
-        if (this.instance === null)
-            await this.refreshInstace()
-
-        devlog("post request: " + url)
-
-        return await this.instance?.post(url, null, config)
-    }
-
-    public static async postParams<T>(url: string, params?: any, config?: AxiosRequestConfig | undefined): Promise<ApiResponse<T> | undefined> {
-        if (this.instance === null)
-            await this.refreshInstace()
-
-        devlog("post request: " + url)
-
-        return await this.instance?.post(url, null, { ...config, params })
-    }
-
-    public static async postData<T>(url: string, data?: any, config?: AxiosRequestConfig | undefined): Promise<ApiResponse<T> | undefined> {
-        if (this.instance === null)
-            await this.refreshInstace()
-
-        devlog("post request: " + url)
-
-        if (!config)
-            config = { headers: {} }
-        else
-            config = { ...config, headers: { ...config?.headers } }
-
-        if (config.headers && !config.headers?.["Content-Type"]) {
-            config.headers["Content-Type"] = "application/x-www-form-urlencoded"
-        }
-
-        if (typeof data === "object") {
-            return await this.instance?.post(url, this.createFormData(data), config)
-        } else {
-            return await this.instance?.post(url, data, config)
-        }
-    }
-    
-
-    public static async postBase<T>(baseUrl: string, params?: any, config?: AxiosRequestConfig | undefined): Promise<ApiResponse<T> | undefined> {
+    public static async postTo<R>(baseUrl: string, data?: any, config?: RequestConfig): Promise<AxiosResponse<R>> {
         try {
             if (!config)
                 config = { headers: {} }
             else
                 config = { ...config, headers: { ...config?.headers } }
-
-            if (this.sessionID == null)
-                this.sessionID = await AsyncStorage.getItem("sid")
-
-            if (this.sessionID && config.headers) {
-                config.headers["Cookie"] = `sid=${this.sessionID};`
-                if (Platform.OS == "ios")
-                    config.headers["Cookies"] = `sid=${this.sessionID};`
-            }
-
-            if (config.headers && !config.headers?.["Content-Type"]) {
-                config.headers["Content-Type"] = "application/x-www-form-urlencoded"
-            }
-
-            devlog("post request: " + baseUrl)
-
-            return await axios.post(baseUrl, null, { ...config, params })
-        } catch (err) {
-            return this.handleResponseError(err)
-        }
-    }
-
-    public static async postBaseData<T>(baseUrl: string, data?: any, config?: AxiosRequestConfig | undefined): Promise<ApiResponse<T> | undefined> {
-        try {
-            if (!config)
-                config = { headers: {} }
-            else
-                config = { ...config, headers: { ...config?.headers } }
-
-            if (this.sessionID == null)
-                this.sessionID = await AsyncStorage.getItem("sid")
-
-            if (this.sessionID && config.headers) {
-                config.headers["Cookie"] = `sid=${this.sessionID};`
-                if (Platform.OS == "ios")
-                    config.headers["Cookies"] = `sid=${this.sessionID};`
-            }
 
             if (config.headers && !config.headers["Content-Type"]) {
-                config.headers["Content-Type"] = "application/x-www-form-urlencoded"
+                config.headers["Content-Type"] = "application/json"
             }
 
             devlog("post request: " + baseUrl)
 
-            if (typeof data === "object") {
-                return await axios.post(baseUrl, this.createFormData(data), config)
-            } else {
-                return await axios.post(baseUrl, data, config)
-            }
+            return await axios.post(baseUrl, data, config)
         } catch (err) {
-            return this.handleResponseError(err)
+            return await this.handleResponseError(err as AxiosError)
         }
     }
 
-    public static async uploadFile(url: string, file?: FileUpload, config?: AxiosRequestConfig | undefined): Promise<void> {
-        try {     
-            let formData = new FormData()
-            formData.append("file", file)
+    //#endregion
 
-            return await this.instance?.post(url, formData, config)
-        } catch (err) {
-            return this.handleResponseError(err)
-        }
-    }
 
     public static getBaseURL(): string {
-
-        if (this.instance === null || !this.instance.defaults.baseURL)
-            return PROD_BASE_URL
+        if (this.axiosInstance === null || !this.axiosInstance.defaults.baseURL)
+            return PRODUCTION_BASE_URL
         else
-            return this.instance.defaults.baseURL
+            return this.axiosInstance.defaults.baseURL
     }
 
-    public static createInstance(isBeta: boolean) {
-        if (this.instance !== null)
+    public static setDefaultHeader(key: string, value: AxiosHeaderValue) {
+        if (this.axiosInstance != null)
+            this.axiosInstance.defaults.headers.common[key] = value
+    }
+
+    private static async prepareHeaders(config?: RequestConfig): Promise<RawAxiosRequestHeaders> {
+        let headers: RawAxiosRequestHeaders = config?.headers ?? {}
+
+        // by default every request will be made with an authorization header
+        if (config?.authorized == null || config.authorized == true) {
+            this.authorizationToken = await getUserToken()
+
+            if (this.authorizationToken != null) {
+                headers.Authorization = this.authorizationToken
+            }
+        }
+
+        return headers
+    }
+
+    public static createInstance(isDev: boolean) {
+        if (this.axiosInstance !== null)
             return
 
-        if (isBeta) {
-            devlog("creating beta instance for axios");
-            this.instance = axios.create({
-                baseURL: DEV_BASE_URL,
-                timeout: 40000,
+        if (isDev) {
+            devlog(" -- creating development instance for axios -- ");
+            this.axiosInstance = axios.create({
+                baseURL: DEVELOPMENT_BASE_URL,
+                timeout: 15000,
             })
+            this.axiosInstance.defaults.headers.common.Host = DEVELOPMENT_HOST
         }
         else {
-            devlog("creating prod instance for axios");
-            this.instance = axios.create({
-                baseURL: PROD_BASE_URL,
-                timeout: 40000,
+            devlog(" -- creating production instance for axios -- ");
+            this.axiosInstance = axios.create({
+                baseURL: PRODUCTION_BASE_URL,
+                timeout: 15000,
             })
+            this.axiosInstance.defaults.headers.common.Host = PRODUCTION_HOST
         }
 
-        this.instance.interceptors.request.use(
-            // make request
+        this.axiosInstance.defaults.headers.common["Accept-Language"] = "tr-TR"
+        this.axiosInstance.defaults.headers.common["X-Moneye-API-Client-Key"] = API_CLIENT_KEY
+        this.axiosInstance.defaults.headers.common["X-Moneye-APP-Version"] = "1.0.30"
+        this.axiosInstance.defaults.headers.common["X-Moneye-APP-Platform"] = PLATFORM_OS_FORMATTED
+        this.axiosInstance.defaults.headers.common["X-Moneye-APP-OS"] = PLATFORM_VERSION
+
+
+        // Request Interceptor
+
+        this.axiosInstance.interceptors.request.use(
             async (config) => {
-                if (this.sessionID == null)
-                    this.sessionID = await AsyncStorage.getItem("sid")
 
-                if (config.method === "POST" && config.headers) {
-                    config.headers["Content-Type"] = "application/x-www-form-urlencoded"
+                const headers = await this.prepareHeaders(config)
+                for (let header of Object.entries(headers)) {
+                    config.headers.set(header[0], header[1])
                 }
 
-                if (this.sessionID && config.headers) {
-                    config.headers.Cookie = `sid=${this.sessionID};`
-                    if (Platform.OS == "ios")
-                        config.headers.Cookies = `sid=${this.sessionID};`
-                }
+                if (this.logRequests)
+                    devlog(config)
 
                 return config
             },
             this.handleResponseError
         );
 
-        this.instance.interceptors.response.use(
-            (response) => {
-                const operationResponse: MApiResponse = response.data
+        // Response Interceptor
 
-                // database operation failed
-                if (operationResponse.success === false)
-                    devlog("operation status: " + operationResponse.operationCode + " (failed)")
+        this.axiosInstance.interceptors.response.use(
+            async (response) => {
 
-                devlog("operationMessage: " + operationResponse.operationMessage)
-
-                if (this.logRequests)
+                if (this.logResponses)
                     devlog(response.data)
-                else if (response.status !== 200 && response.status != 201 && response.status !== 202) {
-                    // request failed
-                    devlog(response.data)
+
+                if ((response.config as RequestConfig).isRetryAfterRefresh == true && RequestClient.refreshTokenPromise != null) {
+                    RequestClient.refreshTokenPromise = null
                 }
 
                 return response
             },
             this.handleResponseError
         );
+
+        if (this.initializationPromiseResolver != null) {
+            this.initializationPromiseResolver()
+            this.initializationPromiseResolver = null
+        }
     }
 
     /**
@@ -277,21 +342,21 @@ class RequestClient {
 
     /** A cancel token by this tag name must have been created */
     public static cancelRequestsByTagOnce(tag: string) {
-        devlog(`Requests tagged \"${tag}\" are cancelled.`)
+        devlog(`Requests tagged "${tag}" are cancelled.`)
         this.cancelTokenSources.get(tag)?.cancel(`Requests tagged ${tag} are cancelled.`)
         this.createCancelToken(tag)
     }
 
     public static cancelRequestsByTagAndRemove(tag: string) {
-        devlog(`Requests tagged \"${tag}\" are cancelled.`)
+        devlog(`Requests tagged "${tag}" are cancelled.`)
         this.cancelTokenSources.get(tag)?.cancel(`Requests tagged ${tag} are cancelled.`)
         this.removeCancelToken(tag)
     }
 
     public static preventRequestsByTag(tag: string) {
         if (this.cancelTokenSources.has(tag)) {
-            devlog(`Requests tagged \"${tag}\" will be prevented from sending until a new token creation, or removal.`)
-            this.cancelTokenSources.get(tag)?.cancel(`Requests tagged \"${tag}\" will be prevented from sending.`)
+            devlog(`Requests tagged "${tag}" will be prevented from sending until a new token creation, or removal.`)
+            this.cancelTokenSources.get(tag)?.cancel(`Requests tagged "${tag}" will be prevented from sending.`)
         }
     }
 
@@ -305,44 +370,99 @@ class RequestClient {
             this.cancelTokenSources.delete(tag)
     }
 
-    private static handleResponseError(error: any) {
+    /** this. is a different value in here */
+    private static async handleResponseError(error: AxiosError) {
         if (error.response == null) {
             devlog("request error: no response. request cancelled?")
-        } else {
-            if (error.response.data) {
-                devlog("request error: " + error?.config?.url)
-                devlog(error.response.data)
-            }
 
-            if (error.response.status) {
-                switch (error.response.status) {
-                    case 401:
-                        return Promise.reject(AuthError401)
-                    case 412:
-                        return Promise.reject(AuthError412)
-                    case 404:
-                        return Promise.reject(AuthError404)
-                    default:
-                        devlog("request error: " + error?.config?.url)
-                        return Promise.reject(error.response)
+            // retry requests with no response, network failure?
+            if (((error.config as RequestConfig)?.retryCount ?? 0) > 0) {
+                return await RequestClient.retryRequest(error)
+            }
+        } else {
+            devlog("request error: " + error?.config?.url, "\nhttp code: " + error?.response?.status, "\nmethod: " + error.config?.method)
+
+            ErrorMonitoring.logRequestError(error)
+
+            // no status means a network error or an unknown error occurred, we should retry this request below
+            const status = error?.response?.status ?? 600
+
+            if (error.config != null) {
+                // if this is a repeated request after a new token was retrieved, try again
+                if ((error.config as RequestConfig).isRetryAfterRefresh !== true &&
+                    (error.config as RequestConfig).authorized !== false &&
+                    (error.config as RequestConfig).bankingAuthorized !== true &&
+                    status == 403 &&
+                    error.config?.url != refreshTokenRoute) {
+                    return await RequestClient.retryAfterRefresh(error.config)
+                }
+
+                if ((error.config as RequestConfig).bankingAuthorized === true && status == 403)
+                    return Promise.reject(Banking403)
+
+                // retry requests with retry count and a 500+ or 0 error, status 0 means network error
+                if ((status >= 500 || status == 0) && ((error.config as RequestConfig)?.retryCount ?? 0) > 0) {
+                    return await RequestClient.retryRequest(error)
                 }
             }
+
+            if (error?.response?.data) {
+                devlog(error.response.data)
+                return Promise.reject(error.response.data)
+            } else {
+                return Promise.reject(error.message)
+            }
         }
+
+        return Promise.reject(error)
     }
 
-    private static createFormData<T extends { [key: string | number]: any }>(data: T): FormData {
-        let form = new FormData()
+    private static async retryAfterRefresh(config: RequestConfig) {
+        if (this.refreshTokenPromise == null) {
+            this.refreshTokenPromise = new Promise(async (resolve, reject) => {
+                try {
+                    const refreshToken = await getRefreshToken()
 
-        for (let key of Object.keys(data)) {
-            const property = data[key]
+                    // try to refresh token, and if it succeeds set them into async storage and retry request
+                    if (refreshToken != null) {
+                        const refreshTokenResult = await this.post<LoginResponse>(refreshTokenRoute, null,
+                            { headers: { "Refresh-Token": refreshToken } }
+                        )
 
-            if (typeof property === "object")
-                form.append(key, JSON.stringify(data[key]))
-            else
-                form.append(key, data[key])
+                        if (refreshTokenResult.status == 200 && refreshTokenResult.data?.data?.token != null) {
+                            await setUserToken(refreshTokenResult.data.data.token)
+                            await setRefreshToken(refreshTokenResult.data.data.refreshToken)
+
+                            const originalRequest: RequestConfig = { ...config, isRetryAfterRefresh: true }
+                            return resolve(await (await RequestClient.getInstance())(originalRequest))
+                        }
+                    }
+                } catch (err) {
+                    return reject(HTTP403)
+                }
+            })
+
+            return this.refreshTokenPromise
+        } else if (this.refreshTokenPromise) {
+            // another request is already trying to refresh the user token, wait for it
+            await this.refreshTokenPromise
+            this.refreshTokenPromise = null
+
+            const originalRequest = { ...config, retry: true }
+            return await (await this.getInstance())(originalRequest)
         }
 
-        return form
+        return Promise.reject()
+    }
+
+    private static async retryRequest(error: AxiosError) {
+        await delay(500)
+        devlog("retries left:", ((error.config as RequestConfig)?.retryCount ?? 1) - 1, "for", error?.config?.url)
+        const originalRequest: RequestConfig = {
+            ...error.config,
+            retryCount: ((error.config as RequestConfig)?.retryCount ?? 1) - 1
+        }
+        return await (await this.getInstance())(originalRequest)
     }
 
     /**
@@ -350,12 +470,18 @@ class RequestClient {
     */
     private static async refreshInstace() {
         try {
-            const isBeta = await AsyncStorage.getItem("isBeta", () => false)
-            this.createInstance(isBeta === "true")
+            const isDev = await getIsDev()
+            this.createInstance(isDev)
         } catch (err) {
             this.createInstance(false)
         }
     }
+}
+
+export const initializeRequestClient = async (environment: AppEnvironment) => {
+    const isDev = environment == AppEnvironment.Dev
+    await setIsDev(isDev)
+    RequestClient.createInstance(isDev)
 }
 
 export default RequestClient
