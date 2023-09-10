@@ -1,21 +1,27 @@
-import { devlog } from "@/util/devlog";
-import axios, { AxiosError, AxiosHeaderValue, AxiosInstance, AxiosRequestConfig, AxiosResponse, CancelToken, CancelTokenSource, RawAxiosRequestHeaders } from "axios";
-import { DEVELOPMENT_BASE_URL, PRODUCTION_BASE_URL } from "../constants";
-import { delay } from "@/util/miscUtils";
-import { HTTP403 } from "../errors/HTTPErrors";
+import { devlog } from "../../util/devlog"
+import axios, {
+    AxiosError,
+    AxiosHeaderValue,
+    AxiosInstance,
+    AxiosRequestConfig,
+    AxiosResponse,
+    RawAxiosRequestHeaders,
+} from "axios"
+import { DEVELOPMENT_BASE_URL, PRODUCTION_BASE_URL } from "../constants"
+import { delay } from "../../util/miscUtils"
+import { HTTP403 } from "./HttpErrors"
 
 export type Response<T> = AxiosResponse<T>
 export type RequestConfig = AxiosRequestConfig & {
-    authorized?: boolean,
-    isRetryAfterRefresh?: boolean,
+    authorized?: boolean
+    isRetryAfterRefresh?: boolean
     retryCount?: number
 }
-export type FileUpload = { uri: string, name: string, type: string }
+export type FileUpload = { uri: string; name: string; type: string }
 
 const refreshTokenRoute = "auth/sign-in/refresh"
 
 namespace RequestClient {
-
     const logResponses = false
     const logRequests = false
 
@@ -27,17 +33,15 @@ namespace RequestClient {
     let initializationPromiseResolver: ((value?: unknown) => void) | null = null
 
     const getInstance = () => {
-        if (axiosInstance === null)
-            refreshInstance()
+        if (axiosInstance === null) refreshInstance()
 
         return axiosInstance as AxiosInstance
     }
 
     export const ensureInitialized = () => {
-        if (axiosInstance != null)
-            return Promise.resolve()
+        if (axiosInstance != null) return Promise.resolve()
         else
-            return new Promise((resolve) => {
+            return new Promise(resolve => {
                 initializationPromiseResolver = resolve
             })
     }
@@ -61,7 +65,7 @@ namespace RequestClient {
     export const post = async <T>(endpoint: string, data?: any, config?: RequestConfig): Promise<Response<T>> => {
         devlog("post request: " + endpoint)
 
-        let reqConfig: RequestConfig = { ...config, headers: { ...config?.headers } }
+        const reqConfig: RequestConfig = { ...config, headers: { ...config?.headers } }
 
         if (data != null && reqConfig.headers != null && !reqConfig.headers?.["Content-Type"]) {
             reqConfig.headers["Content-Type"] = "application/json"
@@ -70,10 +74,14 @@ namespace RequestClient {
         return await getInstance().post(endpoint, data, reqConfig)
     }
 
-    export const postForResponse = async <T>(endpoint: string, data?: any, config?: RequestConfig): Promise<AxiosResponse<T>> => {
+    export const postForResponse = async <T>(
+        endpoint: string,
+        data?: any,
+        config?: RequestConfig,
+    ): Promise<AxiosResponse<T>> => {
         devlog("post request: " + endpoint)
 
-        let reqConfig: RequestConfig = { ...config, headers: { ...config?.headers } }
+        const reqConfig: RequestConfig = { ...config, headers: { ...config?.headers } }
 
         if (data != null && reqConfig.headers != null && !reqConfig.headers?.["Content-Type"]) {
             reqConfig.headers["Content-Type"] = "application/json"
@@ -85,7 +93,7 @@ namespace RequestClient {
     export const put = async <T>(endpoint: string, data: any, config?: RequestConfig): Promise<Response<T>> => {
         devlog("put request: " + endpoint)
 
-        let reqConfig: RequestConfig = { ...config, headers: { ...config?.headers } }
+        const reqConfig: RequestConfig = { ...config, headers: { ...config?.headers } }
 
         if (reqConfig.headers != null && !reqConfig.headers?.["Content-Type"]) {
             reqConfig.headers["Content-Type"] = "application/json"
@@ -94,10 +102,14 @@ namespace RequestClient {
         return await getInstance().put(endpoint, data, reqConfig)
     }
 
-    export const putForResponse = async <T>(endpoint: string, data: any, config?: RequestConfig): Promise<AxiosResponse<T>> => {
+    export const putForResponse = async <T>(
+        endpoint: string,
+        data: any,
+        config?: RequestConfig,
+    ): Promise<AxiosResponse<T>> => {
         devlog("put request: " + endpoint)
 
-        let reqConfig: RequestConfig = { ...config, headers: { ...config?.headers } }
+        const reqConfig: RequestConfig = { ...config, headers: { ...config?.headers } }
 
         if (reqConfig.headers != null && !reqConfig.headers?.["Content-Type"]) {
             reqConfig.headers["Content-Type"] = "application/json"
@@ -121,7 +133,7 @@ namespace RequestClient {
     export const putForm = async <T>(
         endpoint: string,
         formData: FormData,
-        config?: RequestConfig
+        config?: RequestConfig,
     ): Promise<Response<T>> => {
         const multipartConfig = { ...config, headers: { ...config?.headers, "Content-Type": "multipart/form-data" } }
         return getInstance().putForm(endpoint, formData, multipartConfig)
@@ -130,12 +142,11 @@ namespace RequestClient {
     export const putFormForResponse = async <T>(
         endpoint: string,
         formData: FormData,
-        config?: RequestConfig
+        config?: RequestConfig,
     ): Promise<AxiosResponse<T>> => {
         const multipartConfig = { ...config, headers: { ...config?.headers, "Content-Type": "multipart/form-data" } }
         return getInstance().putForm(endpoint, formData, multipartConfig)
     }
-
 
     //#region Requests with different base URLs
 
@@ -151,10 +162,8 @@ namespace RequestClient {
 
     export const postTo = async <R>(baseUrl: string, data?: any, config?: RequestConfig): Promise<AxiosResponse<R>> => {
         try {
-            if (!config)
-                config = { headers: {} }
-            else
-                config = { ...config, headers: { ...config?.headers } }
+            if (!config) config = { headers: {} }
+            else config = { ...config, headers: { ...config?.headers } }
 
             if (config.headers && !config.headers["Content-Type"]) {
                 config.headers["Content-Type"] = "application/json"
@@ -171,12 +180,11 @@ namespace RequestClient {
     //#endregion
 
     export const setDefaultHeader = (key: string, value: AxiosHeaderValue) => {
-        if (axiosInstance != null)
-            axiosInstance.defaults.headers.common[key] = value
+        if (axiosInstance != null) axiosInstance.defaults.headers.common[key] = value
     }
 
     const prepareHeaders = async (config?: RequestConfig): Promise<RawAxiosRequestHeaders> => {
-        let headers: RawAxiosRequestHeaders = config?.headers ?? {}
+        const headers: RawAxiosRequestHeaders = config?.headers ?? {}
 
         // by default every request will be made with an authorization header
         if (config?.authorized == null || config.authorized == true) {
@@ -191,18 +199,16 @@ namespace RequestClient {
     }
 
     export const createInstance = (isDev: boolean) => {
-        if (axiosInstance !== null)
-            return
+        if (axiosInstance !== null) return
 
         if (isDev) {
-            devlog(" -- creating development instance for axios -- ");
+            devlog(" -- creating development instance for axios -- ")
             axiosInstance = axios.create({
                 baseURL: DEVELOPMENT_BASE_URL,
                 timeout: 15000,
             })
-        }
-        else {
-            devlog(" -- creating production instance for axios -- ");
+        } else {
+            devlog(" -- creating production instance for axios -- ")
             axiosInstance = axios.create({
                 baseURL: PRODUCTION_BASE_URL,
                 timeout: 15000,
@@ -213,38 +219,28 @@ namespace RequestClient {
 
         // Request Interceptor
 
-        axiosInstance.interceptors.request.use(
-            async (config) => {
+        axiosInstance.interceptors.request.use(async config => {
+            const headers = await prepareHeaders(config)
+            for (const header of Object.entries(headers)) {
+                config.headers.set(header[0], header[1])
+            }
 
-                const headers = await prepareHeaders(config)
-                for (let header of Object.entries(headers)) {
-                    config.headers.set(header[0], header[1])
-                }
+            if (logRequests) devlog(config)
 
-                if (logRequests)
-                    devlog(config)
-
-                return config
-            },
-            handleResponseError
-        );
+            return config
+        }, handleResponseError)
 
         // Response Interceptor
 
-        axiosInstance.interceptors.response.use(
-            async (response) => {
+        axiosInstance.interceptors.response.use(async response => {
+            if (logResponses) devlog(response.data)
 
-                if (logResponses)
-                    devlog(response.data)
+            if ((response.config as RequestConfig).isRetryAfterRefresh == true && refreshTokenPromise != null) {
+                refreshTokenPromise = null
+            }
 
-                if ((response.config as RequestConfig).isRetryAfterRefresh == true && refreshTokenPromise != null) {
-                    refreshTokenPromise = null
-                }
-
-                return response
-            },
-            handleResponseError
-        );
+            return response
+        }, handleResponseError)
 
         if (initializationPromiseResolver != null) {
             initializationPromiseResolver()
@@ -262,17 +258,23 @@ namespace RequestClient {
                 return await retryRequest(error)
             }
         } else {
-            devlog("request error: " + error?.config?.url, "\nhttp code: " + error?.response?.status, "\nmethod: " + error.config?.method)
+            devlog(
+                "request error: " + error?.config?.url,
+                "\nhttp code: " + error?.response?.status,
+                "\nmethod: " + error.config?.method,
+            )
 
             // no status means a network error or an unknown error occurred, we should retry this request below
             const status = error?.response?.status ?? 600
 
             if (error.config != null) {
                 // if this is a repeated request after a new token was retrieved, try again
-                if ((error.config as RequestConfig).isRetryAfterRefresh !== true &&
+                if (
+                    (error.config as RequestConfig).isRetryAfterRefresh !== true &&
                     (error.config as RequestConfig).authorized !== false &&
                     status == 403 &&
-                    error.config?.url != refreshTokenRoute) {
+                    error.config?.url != refreshTokenRoute
+                ) {
                     return await retryAfterRefresh(error.config)
                 }
 
@@ -295,9 +297,9 @@ namespace RequestClient {
 
     const retryAfterRefresh = async (config: RequestConfig) => {
         if (refreshTokenPromise == null) {
+            // eslint-disable-next-line no-async-promise-executor
             refreshTokenPromise = new Promise(async (resolve, reject) => {
                 try {
-
                     // try to refresh token, and if it succeeds set them into async storage and retry request
                     const refreshTokenResult = await post<{ token?: string }>(refreshTokenRoute)
 
@@ -330,14 +332,14 @@ namespace RequestClient {
         devlog("retries left:", ((error.config as RequestConfig)?.retryCount ?? 1) - 1, "for", error?.config?.url)
         const originalRequest: RequestConfig = {
             ...error.config,
-            retryCount: ((error.config as RequestConfig)?.retryCount ?? 1) - 1
+            retryCount: ((error.config as RequestConfig)?.retryCount ?? 1) - 1,
         }
         return await getInstance()(originalRequest)
     }
 
     /**
-    * For Hot Reload
-    */
+     * For Hot Reload
+     */
     const refreshInstance = () => {
         try {
             const isDev = process.env.NODE_ENV == "development"
