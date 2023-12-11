@@ -30,7 +30,7 @@ const ResourceView = ({
         if (!resourceState || resourceState?.some(res => res.loading != false)) {
             // if there is data inside all resources while any are loading, show loading unless told so
             if(doNotShowLoadingIfDataAvailable) {
-                if(!resourceState?.some(res => res.data == null))
+                if(resourceState?.some(res => res.data == null))
                     return loadingComponent
             } else
                 return loadingComponent
