@@ -7,7 +7,7 @@ import axios, {
     CreateAxiosDefaults,
     RawAxiosRequestHeaders,
 } from "axios"
-import { ApiError, RequestError } from "./request-error"
+import { ApiError, RequestError } from "./RequestError"
 
 export type Response<T = any> = AxiosResponse<ApiResponse<T>>
 export type FileUpload = { uri: string; name: string; type: string }
