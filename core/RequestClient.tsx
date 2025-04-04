@@ -1,38 +1,74 @@
-import { devlog } from "../../util/devlog"
 import axios, {
     AxiosError,
     AxiosHeaderValue,
     AxiosInstance,
     AxiosRequestConfig,
     AxiosResponse,
+    CreateAxiosDefaults,
     RawAxiosRequestHeaders,
 } from "axios"
-import { DEVELOPMENT_BASE_URL, PRODUCTION_BASE_URL } from "../constants"
-import { delay } from "../../util/miscUtils"
-import { HTTP403 } from "./HttpErrors"
+import { ApiError, RequestError } from "./request-error"
 
-export type Response<T> = AxiosResponse<T>
-export type RequestConfig = AxiosRequestConfig & {
-    authorized?: boolean
-    isRetryAfterRefresh?: boolean
-    retryCount?: number
-}
+export type Response<T = any> = AxiosResponse<ApiResponse<T>>
 export type FileUpload = { uri: string; name: string; type: string }
+export interface RequestClientConfig extends CreateAxiosDefaults {
+    baseURL: string
+    headers?: Record<string, string>
+    onAuthenticationError?: (error: unknown) => void
+    refreshTokenRoute: string
+    refreshTokenRequest: (
+        client: typeof RequestClient,
+        refreshToken: string,
+    ) => Promise<{ accessToken?: string; refreshToken?: string }>
+    storage: Storage
+}
 
-const refreshTokenRoute = "auth/sign-in/refresh"
+export type ApiResponse<T = any> = {
+    success: boolean
+    document?: T
+    documents?: T[]
+    total?: number
+    results?: number
+    page?: number
+    limit?: number
+    _results?: number
+    error?: ApiError
+}
+
+export interface Storage {
+    getAccessToken: () => string | null | undefined
+    getRefreshToken: () => string | null | undefined
+    setAccessToken: (token: string) => void
+    setRefreshToken: (token: string) => void
+}
+
+const devlog = (...messages: Array<any>) => {
+    if (import.meta.env.DEV == true) console.log(...messages)
+}
+
+const delay = (byMillis: number): Promise<void> => {
+    return new Promise(resolve => {
+        setTimeout(() => resolve(), byMillis)
+    })
+}
+
+export const initializeRequestClient = (config: RequestClientConfig) => {
+    RequestClient.createInstance(config)
+    return RequestClient.getInstance()
+}
 
 namespace RequestClient {
     const logResponses = false
     const logRequests = false
 
     let axiosInstance: AxiosInstance | null = null
+    let clientConfig: RequestClientConfig | undefined = undefined
 
-    let authorizationToken: string | null = null
     let refreshTokenPromise: Promise<AxiosResponse<any, any>> | null = null
 
     let initializationPromiseResolver: ((value?: unknown) => void) | null = null
 
-    const getInstance = () => {
+    export const getInstance = () => {
         if (axiosInstance === null) refreshInstance()
 
         return axiosInstance as AxiosInstance
@@ -46,26 +82,29 @@ namespace RequestClient {
             })
     }
 
-    export const setAuthToken = (token: string | null) => {
-        authorizationToken = token
-    }
-
-    export const get = async <T>(endpoint: string, config?: RequestConfig): Promise<Response<T>> => {
+    export const get = async <T>(endpoint: string, config?: AxiosRequestConfig<T>): Promise<Response<T>> => {
         devlog("get request: " + endpoint)
 
         return await getInstance().get(endpoint, config)
     }
 
-    export const getForResponse = async <T>(endpoint: string, config?: RequestConfig): Promise<AxiosResponse<T>> => {
+    export const getForResponse = async <T>(
+        endpoint: string,
+        config?: AxiosRequestConfig<T>,
+    ): Promise<AxiosResponse<T>> => {
         devlog("get request: " + endpoint)
 
         return await getInstance().get(endpoint, config)
     }
 
-    export const post = async <T>(endpoint: string, data?: any, config?: RequestConfig): Promise<Response<T>> => {
+    export const post = async <T>(
+        endpoint: string,
+        data?: any,
+        config?: AxiosRequestConfig<T>,
+    ): Promise<Response<T>> => {
         devlog("post request: " + endpoint)
 
-        const reqConfig: RequestConfig = { ...config, headers: { ...config?.headers } }
+        const reqConfig: AxiosRequestConfig<T> = { ...config, headers: { ...config?.headers } }
 
         if (data != null && reqConfig.headers != null && !reqConfig.headers?.["Content-Type"]) {
             reqConfig.headers["Content-Type"] = "application/json"
@@ -77,11 +116,11 @@ namespace RequestClient {
     export const postForResponse = async <T>(
         endpoint: string,
         data?: any,
-        config?: RequestConfig,
+        config?: AxiosRequestConfig<T>,
     ): Promise<AxiosResponse<T>> => {
         devlog("post request: " + endpoint)
 
-        const reqConfig: RequestConfig = { ...config, headers: { ...config?.headers } }
+        const reqConfig: AxiosRequestConfig<T> = { ...config, headers: { ...config?.headers } }
 
         if (data != null && reqConfig.headers != null && !reqConfig.headers?.["Content-Type"]) {
             reqConfig.headers["Content-Type"] = "application/json"
@@ -90,10 +129,10 @@ namespace RequestClient {
         return await getInstance().post(endpoint, data, reqConfig)
     }
 
-    export const put = async <T>(endpoint: string, data: any, config?: RequestConfig): Promise<Response<T>> => {
+    export const put = async <T>(endpoint: string, data: any, config?: AxiosRequestConfig<T>): Promise<Response<T>> => {
         devlog("put request: " + endpoint)
 
-        const reqConfig: RequestConfig = { ...config, headers: { ...config?.headers } }
+        const reqConfig: AxiosRequestConfig<T> = { ...config, headers: { ...config?.headers } }
 
         if (reqConfig.headers != null && !reqConfig.headers?.["Content-Type"]) {
             reqConfig.headers["Content-Type"] = "application/json"
@@ -105,11 +144,11 @@ namespace RequestClient {
     export const putForResponse = async <T>(
         endpoint: string,
         data: any,
-        config?: RequestConfig,
+        config?: AxiosRequestConfig<T>,
     ): Promise<AxiosResponse<T>> => {
         devlog("put request: " + endpoint)
 
-        const reqConfig: RequestConfig = { ...config, headers: { ...config?.headers } }
+        const reqConfig: AxiosRequestConfig<T> = { ...config, headers: { ...config?.headers } }
 
         if (reqConfig.headers != null && !reqConfig.headers?.["Content-Type"]) {
             reqConfig.headers["Content-Type"] = "application/json"
@@ -118,49 +157,54 @@ namespace RequestClient {
         return await getInstance().put(endpoint, data, reqConfig)
     }
 
-    export const _delete = async <T>(endpoint: string, config?: RequestConfig): Promise<Response<T>> => {
+    export const _delete = async <T>(endpoint: string, config?: AxiosRequestConfig<T>): Promise<Response<T>> => {
         devlog("delete request: " + endpoint)
 
         return await getInstance().delete(endpoint, config)
     }
 
-    export const deleteForResponse = async <T>(endpoint: string, config?: RequestConfig): Promise<AxiosResponse<T>> => {
+    export const deleteForResponse = async <T>(
+        endpoint: string,
+        config?: AxiosRequestConfig<T>,
+    ): Promise<AxiosResponse<T>> => {
         devlog("delete request: " + endpoint)
 
         return await getInstance().delete(endpoint, config)
     }
 
-    export const putForm = async <T>(
+    export const putForm = async <T extends FormData>(
         endpoint: string,
         formData: FormData,
-        config?: RequestConfig,
+        config?: AxiosRequestConfig<T>,
     ): Promise<Response<T>> => {
         const multipartConfig = { ...config, headers: { ...config?.headers, "Content-Type": "multipart/form-data" } }
         return getInstance().putForm(endpoint, formData, multipartConfig)
     }
 
-    export const putFormForResponse = async <T>(
+    export const putFormForResponse = async <T extends FormData>(
         endpoint: string,
         formData: FormData,
-        config?: RequestConfig,
+        config?: AxiosRequestConfig<T>,
     ): Promise<AxiosResponse<T>> => {
         const multipartConfig = { ...config, headers: { ...config?.headers, "Content-Type": "multipart/form-data" } }
         return getInstance().putForm(endpoint, formData, multipartConfig)
     }
 
-    //#region Requests with different base URLs
-
-    export const getFrom = async <R>(baseUrl: string, config?: RequestConfig): Promise<AxiosResponse<R>> => {
+    export const getFrom = async <R>(baseUrl: string, config?: AxiosRequestConfig<R>): Promise<AxiosResponse<R>> => {
         try {
             devlog("get request: " + baseUrl)
 
             return await axios.get(baseUrl, { ...config })
-        } catch (err) {
-            return await handleResponseError(err as AxiosError)
+        } catch (err: any) {
+            return await handleResponseError(err)
         }
     }
 
-    export const postTo = async <R>(baseUrl: string, data?: any, config?: RequestConfig): Promise<AxiosResponse<R>> => {
+    export const postTo = async <R>(
+        baseUrl: string,
+        data?: any,
+        config?: AxiosRequestConfig<R>,
+    ): Promise<AxiosResponse<R>> => {
         try {
             if (!config) config = { headers: {} }
             else config = { ...config, headers: { ...config?.headers } }
@@ -172,50 +216,50 @@ namespace RequestClient {
             devlog("post request: " + baseUrl)
 
             return await axios.post(baseUrl, data, config)
-        } catch (err) {
-            return await handleResponseError(err as AxiosError)
+        } catch (err: any) {
+            return await handleResponseError(err)
         }
     }
 
     //#endregion
 
+    export const changeAcceptLanguage = async (language: string) => {
+        await ensureInitialized()
+        getInstance().defaults.headers.common["Accept-Language"] = language
+    }
+
     export const setDefaultHeader = (key: string, value: AxiosHeaderValue) => {
         if (axiosInstance != null) axiosInstance.defaults.headers.common[key] = value
     }
 
-    const prepareHeaders = async (config?: RequestConfig): Promise<RawAxiosRequestHeaders> => {
+    const prepareHeaders = async <T>(config?: AxiosRequestConfig<T>): Promise<RawAxiosRequestHeaders> => {
         const headers: RawAxiosRequestHeaders = config?.headers ?? {}
 
         // by default every request will be made with an authorization header
         if (config?.authorized == null || config.authorized == true) {
-            //authorizationToken = await getUserToken()
-
-            if (authorizationToken != null) {
-                headers.Authorization = authorizationToken
+            const accessToken = clientConfig?.storage.getAccessToken()
+            if (accessToken != null) {
+                headers.Authorization = `Bearer ${accessToken}`
             }
         }
 
         return headers
     }
 
-    export const createInstance = (isDev: boolean) => {
+    export const createInstance = (cfg?: RequestClientConfig) => {
         if (axiosInstance !== null) return
 
-        if (isDev) {
-            devlog(" -- creating development instance for axios -- ")
-            axiosInstance = axios.create({
-                baseURL: DEVELOPMENT_BASE_URL,
-                timeout: 15000,
-            })
-        } else {
-            devlog(" -- creating production instance for axios -- ")
-            axiosInstance = axios.create({
-                baseURL: PRODUCTION_BASE_URL,
-                timeout: 15000,
-            })
-        }
+        clientConfig = cfg
+
+        axiosInstance = axios.create({
+            baseURL: cfg?.baseURL,
+            timeout: 25000,
+        })
 
         axiosInstance.defaults.headers.common["Accept-Language"] = "en-GB"
+        for (let header in cfg?.headers) {
+            axiosInstance.defaults.headers.common[header] = cfg.headers[header]
+        }
 
         // Request Interceptor
 
@@ -235,7 +279,7 @@ namespace RequestClient {
         axiosInstance.interceptors.response.use(async response => {
             if (logResponses) devlog(response.data)
 
-            if ((response.config as RequestConfig).isRetryAfterRefresh == true && refreshTokenPromise != null) {
+            if ((response.config as AxiosRequestConfig).isRetryAfterRefresh == true && refreshTokenPromise != null) {
                 refreshTokenPromise = null
             }
 
@@ -249,13 +293,13 @@ namespace RequestClient {
     }
 
     /**  is a different value in here */
-    const handleResponseError = async (error: AxiosError) => {
+    const handleResponseError = async (error: Partial<AxiosError<ApiResponse>>) => {
         if (error.response == null) {
             devlog("request error: no response. request cancelled?")
 
             // retry requests with no response, network failure?
-            if (((error.config as RequestConfig)?.retryCount ?? 0) > 0) {
-                return await retryRequest(error)
+            if ((error.config?.retryCount ?? 0) > 0) {
+                return await retryRequest(error as AxiosError<ApiResponse>)
             }
         } else {
             devlog(
@@ -270,47 +314,57 @@ namespace RequestClient {
             if (error.config != null) {
                 // if this is a repeated request after a new token was retrieved, try again
                 if (
-                    (error.config as RequestConfig).isRetryAfterRefresh !== true &&
-                    (error.config as RequestConfig).authorized !== false &&
-                    status == 403 &&
-                    error.config?.url != refreshTokenRoute
+                    error.config?.isRetryAfterRefresh !== true &&
+                    error.config?.authorized !== false &&
+                    status == 401 &&
+                    error.config?.url != clientConfig?.refreshTokenRoute
                 ) {
+                    devlog("retry request", error.config.url)
                     return await retryAfterRefresh(error.config)
                 }
 
                 // retry requests with retry count and a 500+ or 0 error, status 0 means network error
-                if ((status >= 500 || status == 0) && ((error.config as RequestConfig)?.retryCount ?? 0) > 0) {
-                    return await retryRequest(error)
+                if ((status >= 500 || status == 0) && (error.config?.retryCount ?? 0) > 0) {
+                    return await retryRequest(error as AxiosError<ApiResponse>)
                 }
-            }
 
-            if (error?.response?.data) {
-                devlog(error.response.data)
-                return Promise.reject(error.response.data)
-            } else {
-                return Promise.reject(error.message)
+                if (error.config.isRetryAfterRefresh && error.config.authorized) {
+                    clientConfig?.onAuthenticationError?.(error.config.data)
+                }
             }
         }
 
-        return Promise.reject(error)
+        return Promise.reject(RequestError.fromAxiosResponse(error))
     }
 
-    const retryAfterRefresh = async (config: RequestConfig) => {
+    const retryAfterRefresh = async <T>(config: AxiosRequestConfig<T>) => {
         if (refreshTokenPromise == null) {
             // eslint-disable-next-line no-async-promise-executor
             refreshTokenPromise = new Promise(async (resolve, reject) => {
                 try {
+                    devlog("send refresh request")
+
+                    const refreshToken = clientConfig!.storage.getRefreshToken()
+
+                    if (refreshToken == null) throw Error("refresh token was null")
+
                     // try to refresh token, and if it succeeds set them into async storage and retry request
-                    const refreshTokenResult = await post<{ token?: string }>(refreshTokenRoute)
+                    const refreshTokenResult = await clientConfig?.refreshTokenRequest(RequestClient, refreshToken)
 
-                    if (refreshTokenResult.status == 200 && refreshTokenResult.data?.token != null) {
-                        setAuthToken(refreshTokenResult.data.token)
+                    if (refreshTokenResult?.accessToken != null && refreshTokenResult?.refreshToken != null) {
+                        clientConfig!.storage.setAccessToken(refreshTokenResult.accessToken)
+                        clientConfig!.storage.setRefreshToken(refreshTokenResult.refreshToken)
 
-                        const originalRequest: RequestConfig = { ...config, isRetryAfterRefresh: true }
+                        const originalRequest: AxiosRequestConfig = { ...config, isRetryAfterRefresh: true }
                         return resolve(await getInstance()(originalRequest))
                     }
                 } catch (err) {
-                    return reject(HTTP403)
+                    refreshTokenPromise = null
+
+                    clientConfig?.onAuthenticationError?.(err)
+
+                    devlog("rejecting with 401")
+                    return reject({ message: "Unauthorized", code: 401 })
                 }
             })
 
@@ -320,7 +374,7 @@ namespace RequestClient {
             await refreshTokenPromise
             refreshTokenPromise = null
 
-            const originalRequest = { ...config, retry: true }
+            const originalRequest = { ...config, isRetryAfterRefresh: true }
             return await getInstance()(originalRequest)
         }
 
@@ -329,10 +383,10 @@ namespace RequestClient {
 
     const retryRequest = async (error: AxiosError) => {
         await delay(500)
-        devlog("retries left:", ((error.config as RequestConfig)?.retryCount ?? 1) - 1, "for", error?.config?.url)
-        const originalRequest: RequestConfig = {
+        devlog("retries left:", (error.config?.retryCount ?? 1) - 1, "for", error?.config?.url)
+        const originalRequest: AxiosRequestConfig = {
             ...error.config,
-            retryCount: ((error.config as RequestConfig)?.retryCount ?? 1) - 1,
+            retryCount: (error.config?.retryCount ?? 1) - 1,
         }
         return await getInstance()(originalRequest)
     }
@@ -341,18 +395,8 @@ namespace RequestClient {
      * For Hot Reload
      */
     const refreshInstance = () => {
-        try {
-            const isDev = process.env.NODE_ENV == "development"
-            createInstance(isDev)
-        } catch (err) {
-            createInstance(false)
-        }
+        createInstance(clientConfig)
     }
-}
-
-export const initializeRequestClient = async () => {
-    const isDev = process.env.NODE_ENV == "development"
-    RequestClient.createInstance(isDev)
 }
 
 export default RequestClient
